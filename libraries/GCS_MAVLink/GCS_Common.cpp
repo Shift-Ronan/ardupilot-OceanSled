@@ -3658,13 +3658,26 @@ void GCS_MAVLINK::handle_heartbeat(const mavlink_message_t &msg) const
     }
 }
 
+void GCS_MAVLINK::handle_arduino_sense(const mavlink_message_t &msg) const
+{
+    //forward sensor data from secondary computer
+    mavlink_arduino_sense_t arduino_sense_packet;
+    mavlink_msg_decode(msg, arduino_sense_packet);
+    mavlink_msg_arduino_sense_send_struct(chan, arduino_sense_packet);
+}
+
 /*
   handle messages which don't require vehicle specific data
  */
 void GCS_MAVLINK::handle_common_message(const mavlink_message_t &msg)
 {
     switch (msg.msgid) {
-
+/* needs testing
+    case MAVLINK_MSG_ID_ARDUINO_SENSE: { // forward arduino_sense message
+        handle_arduino_sense(msg);
+        break;
+    }
+*/            
     case MAVLINK_MSG_ID_HEARTBEAT: {
         handle_heartbeat(msg);
         break;
