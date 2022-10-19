@@ -5,6 +5,11 @@
 #include <AP_Common/AP_Common.h>
 #include <AP_Param/AP_Param.h>
 #include <AP_Math/AP_Math.h>
+#include <AP_Common/Bitmask.h>
+
+#ifndef AP_RC_CHANNEL_AUX_FUNCTION_STRINGS_ENABLED
+#define AP_RC_CHANNEL_AUX_FUNCTION_STRINGS_ENABLED 1
+#endif
 
 #define NUM_RC_CHANNELS 16
 
@@ -264,6 +269,9 @@ public:
         SCRIPTING_6 =        305,
         SCRIPTING_7 =        306,
         SCRIPTING_8 =        307,
+
+        // this must be higher than any aux function above
+        AUX_FUNCTION_MAX =   308,
     };
     typedef enum AUX_FUNC aux_func_t;
 
@@ -288,8 +296,9 @@ public:
     // wrapper function around do_aux_function which allows us to log
     bool run_aux_function(aux_func_t ch_option, AuxSwitchPos pos, AuxFuncTriggerSource source);
 
-#if !HAL_MINIMIZE_FEATURES
+#if AP_RC_CHANNEL_AUX_FUNCTION_STRINGS_ENABLED
     const char *string_for_aux_function(AUX_FUNC function) const;
+    const char *string_for_aux_pos(AuxSwitchPos pos) const;
 #endif
     // pwm value under which we consider that Radio value is invalid
     static const uint16_t RC_MIN_LIMIT_PWM = 800;
@@ -390,7 +399,7 @@ private:
     void read_mode_switch();
     bool debounce_completed(int8_t position);
 
-#if !HAL_MINIMIZE_FEATURES
+#if AP_RC_CHANNEL_AUX_FUNCTION_STRINGS_ENABLED
     // Structure to lookup switch change announcements
     struct LookupTable{
        AUX_FUNC option;
@@ -559,6 +568,9 @@ public:
     // returns true if we have had a direct detach RC reciever, does not include overrides
     bool has_had_rc_receiver() const { return _has_had_rc_receiver; }
 
+    // returns true if we have had an override on any channel
+    bool has_had_rc_override() const { return _has_had_override; }
+
     /*
       get the RC input PWM value given a channel number.  Note that
       channel numbers start at 1, as this API is designed for use in
@@ -585,6 +597,11 @@ public:
     void calibrating(bool b) { gcs_is_calibrating = b; }
     bool calibrating() { return gcs_is_calibrating; }
 
+#if AP_SCRIPTING_ENABLED
+    // get last aux cached value for scripting. Returns false if never set, otherwise 0,1,2
+    bool get_aux_cached(RC_Channel::aux_func_t aux_fn, uint8_t &pos);
+#endif
+    
 protected:
 
     enum class Option {
@@ -604,6 +621,7 @@ protected:
 
     void new_override_received() {
         has_new_overrides = true;
+        _has_had_override = true;
     }
 
 private:
@@ -614,6 +632,7 @@ private:
     uint32_t last_update_ms;
     bool has_new_overrides;
     bool _has_had_rc_receiver; // true if we have had a direct detach RC reciever, does not include overrides
+    bool _has_had_override; // true if we have had an override on any channel
 
     AP_Float _override_timeout;
     AP_Int32  _options;
@@ -626,6 +645,15 @@ private:
 
     // true if GCS is performing a RC calibration
     bool gcs_is_calibrating;
+
+#if AP_SCRIPTING_ENABLED
+    // bitmask of last aux function value, 2 bits per function
+    // value 0 means never set, otherwise level+1
+    HAL_Semaphore aux_cache_sem;
+    Bitmask<unsigned(RC_Channel::AUX_FUNC::AUX_FUNCTION_MAX)*2> aux_cached;
+
+    void set_aux_cached(RC_Channel::aux_func_t aux_fn, RC_Channel::AuxSwitchPos pos);
+#endif
 };
 
 RC_Channels &rc();

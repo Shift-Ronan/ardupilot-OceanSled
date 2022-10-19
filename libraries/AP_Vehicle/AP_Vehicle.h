@@ -51,6 +51,7 @@
 #include <AP_ExternalAHRS/AP_ExternalAHRS.h>
 #include <AP_VideoTX/AP_SmartAudio.h>
 #include <AP_VideoTX/AP_Tramp.h>
+#include <AP_TemperatureSensor/AP_TemperatureSensor.h>
 #include <SITL/SITL.h>
 #include <AP_CustomRotations/AP_CustomRotations.h>
 #include <AP_AIS/AP_AIS.h>
@@ -70,8 +71,7 @@ public:
     }
 
     /* Do not allow copies */
-    AP_Vehicle(const AP_Vehicle &other) = delete;
-    AP_Vehicle &operator=(const AP_Vehicle&) = delete;
+    CLASS_NO_COPY(AP_Vehicle);
 
     static AP_Vehicle *get_singleton();
 
@@ -406,6 +406,10 @@ protected:
     AC_Fence fence;
 #endif
 
+#if AP_TEMPERATURE_SENSOR_ENABLED
+    AP_TemperatureSensor temperature_sensor;
+#endif
+
     static const struct AP_Param::GroupInfo var_info[];
     static const struct AP_Scheduler::Task scheduler_tasks[];
 
@@ -445,6 +449,10 @@ private:
     // run notch update at either loop rate or 200Hz
     void update_dynamic_notch_at_specified_rate();
 
+    // decimation for 1Hz update
+    uint8_t one_Hz_counter;
+    void one_Hz_update();
+
     bool likely_flying;         // true if vehicle is probably flying
     uint32_t _last_flying_ms;   // time when likely_flying last went true
     uint32_t _last_notch_update_ms[HAL_INS_NUM_HARMONIC_NOTCH_FILTERS]; // last time update_dynamic_notch() was run
@@ -452,6 +460,7 @@ private:
     static AP_Vehicle *_singleton;
 
     bool done_safety_init;
+
 
     uint32_t _last_internal_errors;  // backup of AP_InternalError::internal_errors bitmask
 

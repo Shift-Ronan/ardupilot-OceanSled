@@ -166,6 +166,42 @@ class AutoTestSub(AutoTest):
         self.watch_altitude_maintained()
         self.disarm_vehicle()
 
+    def ModeChanges(self, delta=0.2):
+        """Check if alternating between ALTHOLD, STABILIZE and POSHOLD affects altitude"""
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        # zero buoyancy and no baro noise
+        self.set_parameter("SIM_BUOYANCY", 0)
+        self.set_parameter("SIM_BARO_RND", 0)
+        # dive a bit to make sure we are not surfaced
+        self.change_mode('STABILIZE')
+        self.set_rc(Joystick.Throttle, 1350)
+        self.delay_sim_time(10)
+        self.set_rc(Joystick.Throttle, 1500)
+        self.delay_sim_time(3)
+        # start the test itself, go through some modes and check if anything changes
+        previous_altitude = self.mav.recv_match(type='VFR_HUD', blocking=True).alt
+        self.change_mode('ALT_HOLD')
+        self.delay_sim_time(2)
+        self.change_mode('POSHOLD')
+        self.delay_sim_time(2)
+        self.change_mode('STABILIZE')
+        self.delay_sim_time(2)
+        self.change_mode('ALT_HOLD')
+        self.delay_sim_time(2)
+        self.change_mode('STABILIZE')
+        self.delay_sim_time(2)
+        self.change_mode('ALT_HOLD')
+        self.delay_sim_time(2)
+        self.change_mode('MANUAL')
+        self.disarm_vehicle()
+        final_altitude = self.mav.recv_match(type='VFR_HUD', blocking=True).alt
+        if abs(previous_altitude - final_altitude) > delta:
+            raise NotAchievedException(
+                "Changing modes affected depth with no throttle input!, started at {}, ended at {}"
+                .format(previous_altitude, final_altitude)
+            )
+
     def PositionHold(self):
         """Test POSHOLD mode"""
         self.wait_ready_to_arm()
@@ -255,8 +291,11 @@ class AutoTestSub(AutoTest):
         self.progress("Manual dive OK")
 
         m = self.assert_receive_message('SCALED_PRESSURE3')
-        if m.temperature != 2650:
-            raise NotAchievedException("Did not get correct TSYS01 temperature")
+
+        # Note this temperature matches the output of the Atmospheric Model for Air currently
+        # And should be within 1 deg C of 40 degC
+        if (m.temperature < 3900) or (4100 < m.temperature):
+            raise NotAchievedException("Did not get correct TSYS01 temperature: Got %f" % m.temperature)
 
     def DiveMission(self):
         '''Dive mission'''
@@ -277,19 +316,14 @@ class AutoTestSub(AutoTest):
 
     def GripperMission(self):
         '''Test gripper mission items'''
-        try:
-            self.get_parameter("GRIP_ENABLE", timeout=5)
-        except NotAchievedException:
-            self.progress("Skipping; Gripper not enabled in config?")
-            return
-
         self.load_mission("sub-gripper-mission.txt")
-        self.change_mode('LOITER')
+        self.change_mode('GUIDED')
         self.wait_ready_to_arm()
         self.arm_vehicle()
         self.change_mode('AUTO')
         self.wait_statustext("Gripper Grabbed", timeout=60)
         self.wait_statustext("Gripper Released", timeout=60)
+        self.disarm_vehicle()
 
     def SET_POSITION_TARGET_GLOBAL_INT(self):
         '''Move vehicle using SET_POSITION_TARGET_GLOBAL_INT'''
@@ -407,6 +441,7 @@ class AutoTestSub(AutoTest):
             self.DiveManual,
             self.AltitudeHold,
             self.PositionHold,
+            self.ModeChanges,
             self.DiveMission,
             self.GripperMission,
             self.DoubleCircle,

@@ -245,6 +245,14 @@ for t in $CI_BUILD_TARGET; do
         continue
     fi
 
+    if [ "$t" == "fmuv3-bootloader" ]; then
+        echo "Building fmuv3 bootloader"
+        $waf configure --board fmuv3 --bootloader
+        $waf clean
+        $waf bootloader
+        continue
+    fi
+    
     if [ "$t" == "stm32f7" ]; then
         echo "Building mRoX21-777/"
         $waf configure --Werror --board mRoX21-777
@@ -365,12 +373,14 @@ for t in $CI_BUILD_TARGET; do
              --no-disable-all \
              --no-disable-none \
              --no-disable-in-turn \
+             --no-enable-in-turn \
              --board=CubeOrange \
              --build-targets=copter \
              --build-targets=plane
         echo "Checking all/none options in build_options.py work"
         time ./Tools/autotest/test_build_options.py \
              --no-disable-in-turn \
+             --no-enable-in-turn \
              --build-targets=copter \
              --build-targets=plane
         continue

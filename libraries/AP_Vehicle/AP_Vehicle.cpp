@@ -13,6 +13,7 @@
 #include <AP_CheckFirmware/AP_CheckFirmware.h>
 #if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
 #include <AP_HAL_ChibiOS/sdcard.h>
+#include <AP_HAL_ChibiOS/hwdef/common/stm32_util.h>
 #endif
 
 #define SCHED_TASK(func, rate_hz, max_time_micros, prio) SCHED_TASK_CLASS(AP_Vehicle, &vehicle, func, rate_hz, max_time_micros, prio)
@@ -105,6 +106,13 @@ const AP_Param::GroupInfo AP_Vehicle::var_info[] = {
     // @Path: ../AP_OpenDroneID/AP_OpenDroneID.cpp
     AP_SUBGROUPINFO(opendroneid, "DID_", 15, AP_Vehicle, AP_OpenDroneID),
 #endif
+
+#if AP_TEMPERATURE_SENSOR_ENABLED
+    // @Group: TEMP
+    // @Path: ../AP_TemperatureSensor/AP_TemperatureSensor.cpp
+    AP_SUBGROUPINFO(temperature_sensor, "TEMP", 16, AP_Vehicle, AP_TemperatureSensor),
+#endif
+
     AP_GROUPEND
 };
 
@@ -248,6 +256,10 @@ void AP_Vehicle::setup()
     efi.init();
 #endif
 
+#if AP_TEMPERATURE_SENSOR_ENABLED
+    temperature_sensor.init();
+#endif
+
 #if AP_AIS_ENABLED
     ais.init();
 #endif
@@ -352,6 +364,9 @@ const AP_Scheduler::Task AP_Vehicle::scheduler_tasks[] = {
 #if OSD_ENABLED
     SCHED_TASK(publish_osd_info, 1, 10, 240),
 #endif
+#if AP_TEMPERATURE_SENSOR_ENABLED
+    SCHED_TASK_CLASS(AP_TemperatureSensor, &vehicle.temperature_sensor, update,        5, 50, 242),
+#endif
 #if HAL_INS_ACCELCAL_ENABLED
     SCHED_TASK(accel_cal_update,                                                      10, 100, 245),
 #endif
@@ -362,7 +377,10 @@ const AP_Scheduler::Task AP_Vehicle::scheduler_tasks[] = {
     SCHED_TASK_CLASS(AP_AIS,       &vehicle.ais,            update,                    5, 100, 249),
 #endif
 #if HAL_EFI_ENABLED
-    SCHED_TASK_CLASS(AP_EFI,       &vehicle.efi,            update,                   10, 200, 250),
+    SCHED_TASK_CLASS(AP_EFI,       &vehicle.efi,            update,                   50, 200, 250),
+#endif
+#if HAL_INS_ACCELCAL_ENABLED
+    SCHED_TASK(one_Hz_update,                                                         1, 100, 252),
 #endif
     SCHED_TASK(update_arming,          1,     50, 253),
 };
@@ -481,7 +499,7 @@ void AP_Vehicle::update_dynamic_notch(AP_InertialSensor::HarmonicNotch &notch)
     }
 
     const AP_Motors* motors = AP::motors();
-    if (motors->get_spool_state() == AP_Motors::SpoolState::SHUT_DOWN) {
+    if (motors != nullptr && motors->get_spool_state() == AP_Motors::SpoolState::SHUT_DOWN) {
         notch.set_inactive(true);
     } else {
         notch.set_inactive(false);
@@ -513,8 +531,8 @@ void AP_Vehicle::update_dynamic_notch(AP_InertialSensor::HarmonicNotch &notch)
             // set the harmonic notch filter frequency scaled on measured frequency
             if (notch.params.hasOption(HarmonicNotchFilterParams::Options::DynamicHarmonic)) {
                 float notches[INS_MAX_NOTCHES];
-                const uint8_t num_notches = AP::esc_telem().get_motor_frequencies_hz(notch.num_dynamic_notches, notches);
                 // ESC telemetry will return 0 for missing data, but only after 1s
+                const uint8_t num_notches = AP::esc_telem().get_motor_frequencies_hz(INS_MAX_NOTCHES, notches);
                 for (uint8_t i = 0; i < num_notches; i++) {
                     if (!is_zero(notches[i])) {
                         notches[i] =  MAX(ref_freq, notches[i]);
@@ -679,6 +697,36 @@ void AP_Vehicle::accel_cal_update()
 void AP_Vehicle::update_arming()
 {
     AP::arming().update();
+}
+
+/*
+  one Hz checks common to all vehicles
+ */
+void AP_Vehicle::one_Hz_update(void)
+{
+    one_Hz_counter++;
+
+    /*
+      every 10s check if using a 2M firmware on a 1M board
+     */
+    if (one_Hz_counter % 10U == 0) {
+#if defined(BOARD_CHECK_F427_USE_1M) && (BOARD_FLASH_SIZE>1024)
+        if (!hal.util->get_soft_armed() && check_limit_flash_1M()) {
+            GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, BOARD_CHECK_F427_USE_1M);
+        }
+#endif
+    }
+
+    /*
+      every 30s check if using a 1M firmware on a 2M board
+     */
+    if (one_Hz_counter % 30U == 0) {
+#if defined(BOARD_CHECK_F427_USE_1M) && (BOARD_FLASH_SIZE<=1024)
+        if (!hal.util->get_soft_armed() && !check_limit_flash_1M()) {
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, BOARD_CHECK_F427_USE_2M);
+        }
+#endif
+    }
 }
 
 AP_Vehicle *AP_Vehicle::_singleton = nullptr;

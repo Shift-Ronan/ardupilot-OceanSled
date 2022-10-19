@@ -170,8 +170,9 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 #ifndef HAL_BUILD_AP_PERIPH
     // @Param: _BUS
     // @DisplayName: Airspeed I2C bus
-    // @Description: Bus number of the I2C bus where the airspeed sensor is connected
-    // @Values: 0:Bus0(internal),1:Bus1(external),2:Bus2(auxiliary)
+    // @Description: Bus number of the I2C bus where the airspeed sensor is connected. May not correspond to board's I2C bus number labels. Retry another bus and reboot if airspeed sensor fails to initialize.
+    // @Values: 0:Bus0,1:Bus1,2:Bus2
+    // @RebootRequired: True
     // @User: Advanced
     AP_GROUPINFO("_BUS",  9, AP_Airspeed, param[0].bus, HAL_AIRSPEED_BUS_DEFAULT),
 #endif // HAL_BUILD_AP_PERIPH
@@ -285,8 +286,9 @@ const AP_Param::GroupInfo AP_Airspeed::var_info[] = {
 
     // @Param: 2_BUS
     // @DisplayName: Airspeed I2C bus for 2nd sensor
-    // @Description: The bus number of the I2C bus to look for the sensor on
-    // @Values: 0:Bus0(internal),1:Bus1(external),2:Bus2(auxiliary)
+    // @Description: Bus number of the I2C bus where the airspeed sensor is connected. May not correspond to board's I2C bus number labels. Retry another bus and reboot if airspeed sensor fails to initialize.
+    // @Values: 0:Bus0,1:Bus1,2:Bus2
+    // @RebootRequired: True
     // @User: Advanced
     AP_GROUPINFO("2_BUS",  20, AP_Airspeed, param[1].bus, 1),
 
@@ -464,7 +466,7 @@ void AP_Airspeed::init()
             break;
         case TYPE_UAVCAN:
 #if AP_AIRSPEED_UAVCAN_ENABLED
-            sensor[i] = AP_Airspeed_UAVCAN::probe(*this, i);
+            sensor[i] = AP_Airspeed_UAVCAN::probe(*this, i, uint32_t(param[i].bus_id.get()));
 #endif
             break;
         case TYPE_NMEA_WATER:
@@ -489,7 +491,30 @@ void AP_Airspeed::init()
             num_sensors = i+1;
         }
     }
+
+#if AP_AIRSPEED_UAVCAN_ENABLED
+    // we need a 2nd pass for DroneCAN sensors so we can match order by DEVID
+    // the 2nd pass accepts any devid
+    for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
+        if (sensor[i] == nullptr && (enum airspeed_type)param[i].type.get() == TYPE_UAVCAN) {
+            sensor[i] = AP_Airspeed_UAVCAN::probe(*this, i, 0);
+            if (sensor[i] != nullptr) {
+                num_sensors = i+1;
+            }
+        }
+    }
+#endif // AP_AIRSPEED_UAVCAN_ENABLED
 #endif // HAL_AIRSPEED_PROBE_LIST
+
+    // set DEVID to zero for any sensors not found. This allows backends to order
+    // based on previous value of DEVID. This allows for swapping out sensors
+    for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
+        if (sensor[i] == nullptr) {
+            // note we use set() not set_and_save() to allow a sensor to be temporarily
+            // removed for one boot without losing its slot
+            param[i].bus_id.set(0);
+        }
+    }
 }
 
 // read the airspeed sensor
@@ -703,7 +728,7 @@ void AP_Airspeed::Log_Airspeed()
 {
     const uint64_t now = AP_HAL::micros64();
     for (uint8_t i=0; i<AIRSPEED_MAX_SENSORS; i++) {
-        if (!enabled(i)) {
+        if (!enabled(i) || sensor[i] == nullptr) {
             continue;
         }
         float temperature;
@@ -726,6 +751,26 @@ void AP_Airspeed::Log_Airspeed()
             primary       : get_primary()
         };
         AP::logger().WriteBlock(&pkt, sizeof(pkt));
+
+#if AP_AIRSPEED_HYGROMETER_ENABLE
+        struct {
+            uint32_t sample_ms;
+            float temperature;
+            float humidity;
+        } hygrometer;
+        if (sensor[i]->get_hygrometer(hygrometer.sample_ms, hygrometer.temperature, hygrometer.humidity) &&
+            hygrometer.sample_ms != state[i].last_hygrometer_log_ms) {
+            AP::logger().WriteStreaming("HYGR",
+                                        "TimeUS,Humidity,Temp",
+                                        "s%O",
+                                        "F--",
+                                        "Qff",
+                                        AP_HAL::micros64(),
+                                        hygrometer.humidity,
+                                        hygrometer.temperature);
+            state[i].last_hygrometer_log_ms = hygrometer.sample_ms;
+        }
+#endif
     }
 }
 
@@ -812,6 +857,16 @@ float AP_Airspeed::get_corrected_pressure(uint8_t i) const {
     }
     return state[i].corrected_pressure;
 }
+
+#if AP_AIRSPEED_HYGROMETER_ENABLE
+bool AP_Airspeed::get_hygrometer(uint8_t i, uint32_t &last_sample_ms, float &temperature, float &humidity) const
+{
+    if (!enabled(i) || sensor[i] == nullptr) {
+        return false;
+    }
+    return sensor[i]->get_hygrometer(last_sample_ms, temperature, humidity);
+}
+#endif // AP_AIRSPEED_HYGROMETER_ENABLE
 
 #else  // build type is not appropriate; provide a dummy implementation:
 const AP_Param::GroupInfo AP_Airspeed::var_info[] = { AP_GROUPEND };

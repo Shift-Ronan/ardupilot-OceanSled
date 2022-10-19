@@ -92,6 +92,16 @@ const AP_Param::Info AP_Periph_FW::var_info[] = {
     // @RebootRequired: True
     GARRAY(can_baudrate,     0, "CAN_BAUDRATE", 1000000),
 
+#ifdef HAL_PERIPH_ENABLE_SLCAN
+    // @Param: CAN_SLCAN_CPORT
+    // @DisplayName: SLCAN Route
+    // @Description: CAN Interface ID to be routed to SLCAN, 0 means no routing
+    // @Values: 0:Disabled,1:First interface,2:Second interface
+    // @User: Standard
+    // @RebootRequired: True
+    GSCALAR(can_slcan_cport, "CAN_SLCAN_CPORT", 1),
+#endif
+
 #if HAL_NUM_CAN_IFACES >= 2
     // @Param: CAN_PROTOCOL
     // @DisplayName: Enable use of specific protocol to be used on this port
@@ -384,6 +394,12 @@ const AP_Param::Info AP_Periph_FW::var_info[] = {
     // @RebootRequired: True
     GSCALAR(esc_telem_rate, "ESC_TELEM_RATE", AP_PERIPH_ESC_TELEM_RATE_DEFAULT),
 #endif
+#endif
+
+#if AP_TEMPERATURE_SENSOR_ENABLED
+    // @Group: TEMP
+    // @Path: ../libraries/AP_TemperatureSensor/AP_TemperatureSensor.cpp
+    GOBJECT(temperature_sensor,         "TEMP",     AP_TemperatureSensor),
 #endif
 
 #ifdef HAL_PERIPH_ENABLE_MSP

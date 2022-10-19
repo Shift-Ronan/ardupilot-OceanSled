@@ -556,20 +556,10 @@ void GCS_MAVLINK::send_ahrs2()
 
 MissionItemProtocol *GCS::get_prot_for_mission_type(const MAV_MISSION_TYPE mission_type) const
 {
-    switch (mission_type) {
-    case MAV_MISSION_TYPE_MISSION:
-        return _missionitemprotocol_waypoints;
-#if HAL_RALLY_ENABLED
-    case MAV_MISSION_TYPE_RALLY:
-        return _missionitemprotocol_rally;
-#endif
-#if AP_FENCE_ENABLED
-    case MAV_MISSION_TYPE_FENCE:
-        return _missionitemprotocol_fence;
-#endif
-    default:
+    if (mission_type >= ARRAY_SIZE(missionitemprotocols)) {
         return nullptr;
     }
+    return missionitemprotocols[mission_type];
 }
 
 // handle a request for the number of items we have stored for a mission type:
@@ -698,8 +688,7 @@ void GCS_MAVLINK::handle_mission_clear_all(const mavlink_message_t &msg) const
 
 bool GCS_MAVLINK::requesting_mission_items() const
 {
-    for (uint8_t i=0; i<ARRAY_SIZE(supported_mission_types); i++) {
-        MissionItemProtocol *prot = gcs().get_prot_for_mission_type(supported_mission_types[i]);
+    for (const auto *prot : gcs().missionitemprotocols) {
         if (prot && prot->receiving && prot->active_link_is(this)) {
             return true;
         }
@@ -944,7 +933,9 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_DISTANCE_SENSOR,       MSG_DISTANCE_SENSOR},
             // request also does report:
         { MAVLINK_MSG_ID_TERRAIN_REQUEST,       MSG_TERRAIN},
+#if AP_MAVLINK_BATTERY2_ENABLED
         { MAVLINK_MSG_ID_BATTERY2,              MSG_BATTERY2},
+#endif
         { MAVLINK_MSG_ID_CAMERA_FEEDBACK,       MSG_CAMERA_FEEDBACK},
 #if HAL_MOUNT_ENABLED
         { MAVLINK_MSG_ID_GIMBAL_DEVICE_ATTITUDE_STATUS, MSG_GIMBAL_DEVICE_ATTITUDE_STATUS},
@@ -2201,41 +2192,37 @@ void GCS::send_message(enum ap_message id)
 void GCS::update_send()
 {
     update_send_has_been_called = true;
-#if !defined(HAL_BUILD_AP_PERIPH) && AP_FENCE_ENABLED
+
     if (!initialised_missionitemprotocol_objects) {
         initialised_missionitemprotocol_objects = true;
         // once-only initialisation of MissionItemProtocol objects:
+#if AP_MISSION_ENABLED
         AP_Mission *mission = AP::mission();
         if (mission != nullptr) {
-            _missionitemprotocol_waypoints = new MissionItemProtocol_Waypoints(*mission);
+            missionitemprotocols[MAV_MISSION_TYPE_MISSION] = new MissionItemProtocol_Waypoints(*mission);
         }
+#endif
 #if HAL_RALLY_ENABLED
         AP_Rally *rally = AP::rally();
         if (rally != nullptr) {
-            _missionitemprotocol_rally = new MissionItemProtocol_Rally(*rally);
+            missionitemprotocols[MAV_MISSION_TYPE_RALLY] = new MissionItemProtocol_Rally(*rally);
         }
 #endif
 #if AP_FENCE_ENABLED
         AC_Fence *fence = AP::fence();
         if (fence != nullptr) {
-            _missionitemprotocol_fence = new MissionItemProtocol_Fence(*fence);
+            missionitemprotocols[MAV_MISSION_TYPE_FENCE] = new MissionItemProtocol_Fence(*fence);
         }
-    }
 #endif
-    if (_missionitemprotocol_waypoints != nullptr) {
-        _missionitemprotocol_waypoints->update();
     }
-#if HAL_RALLY_ENABLED
-    if (_missionitemprotocol_rally != nullptr) {
-        _missionitemprotocol_rally->update();
+
+    for (auto *prot : missionitemprotocols) {
+        if (prot == nullptr) {
+            continue;
+        }
+        prot->update();
     }
-#endif
-#if AP_FENCE_ENABLED
-    if (_missionitemprotocol_fence != nullptr) {
-        _missionitemprotocol_fence->update();
-    }
-#endif
-#endif // HAL_BUILD_AP_PERIPH
+
     // round-robin the GCS_MAVLINK backend that gets to go first so
     // one backend doesn't monopolise all of the time allowed for sending
     // messages
@@ -2340,6 +2327,7 @@ void GCS::setup_uarts()
 #endif
 }
 
+#if AP_MAVLINK_BATTERY2_ENABLED
 // report battery2 state
 void GCS_MAVLINK::send_battery2()
 {
@@ -2357,6 +2345,7 @@ void GCS_MAVLINK::send_battery2()
     }
 #endif
 }
+#endif  // AP_MAVLINK_BATTERY2_ENABLED
 
 /*
   handle a SET_MODE MAVLink message
@@ -2674,11 +2663,24 @@ MAV_RESULT GCS_MAVLINK::handle_command_set_message_interval(const mavlink_comman
 
 MAV_RESULT GCS_MAVLINK::set_message_interval(uint32_t msg_id, int32_t interval_us)
 {
+    const ap_message id = mavlink_id_to_ap_message_id(msg_id);
+    if (id == MSG_LAST) {
+        gcs().send_text(MAV_SEVERITY_INFO, "No ap_message for mavlink id (%u)", (unsigned int)msg_id);
+        return MAV_RESULT_DENIED;
+    }
+
     uint16_t interval_ms;
     if (interval_us == 0) {
         // zero is "reset to default rate"
-        if (!get_default_interval_for_mavlink_message_id(msg_id, interval_ms)) {
-            return MAV_RESULT_FAILED;
+        if (!get_default_interval_for_ap_message(id, interval_ms)) {
+            // if we don't have a default interval then we assume that
+            // we do not send that message by default.  That may not
+            // be strictly true if some random piece of code has set a
+            // rate as part of its initialisation - in which case that
+            // piece of code should probably be adding something into
+            // whatever get_default_interval_for_ap_message is looking
+            // at.
+            interval_ms = 0;
         }
     } else if (interval_us == -1) {
         // minus-one is "stop sending"
@@ -2691,7 +2693,7 @@ MAV_RESULT GCS_MAVLINK::set_message_interval(uint32_t msg_id, int32_t interval_u
     } else {
         interval_ms = interval_us / 1000;
     }
-    if (set_mavlink_message_id_interval(msg_id, interval_ms)) {
+    if (set_ap_message_interval(id, interval_ms)) {
         return MAV_RESULT_ACCEPTED;
     }
 
@@ -4405,6 +4407,7 @@ MAV_RESULT GCS_MAVLINK::handle_command_set_ekf_source_set(const mavlink_command_
     return MAV_RESULT_DENIED;
 }
 
+#if AP_GRIPPER_ENABLED
 MAV_RESULT GCS_MAVLINK::handle_command_do_gripper(const mavlink_command_long_t &packet)
 {
     AP_Gripper *gripper = AP::gripper();
@@ -4434,6 +4437,7 @@ MAV_RESULT GCS_MAVLINK::handle_command_do_gripper(const mavlink_command_long_t &
 
     return result;
 }
+#endif  // AP_GRIPPER_ENABLED
 
 #if HAL_SPRAYER_ENABLED
 MAV_RESULT GCS_MAVLINK::handle_command_do_sprayer(const mavlink_command_long_t &packet)
@@ -4583,10 +4587,11 @@ MAV_RESULT GCS_MAVLINK::handle_command_long_packet(const mavlink_command_long_t 
         result = handle_command_camera(packet);
         break;
 #endif
+#if AP_GRIPPER_ENABLED
     case MAV_CMD_DO_GRIPPER:
         result = handle_command_do_gripper(packet);
         break;
-
+#endif
 #if HAL_SPRAYER_ENABLED
     case MAV_CMD_DO_SPRAYER:
         result = handle_command_do_sprayer(packet);
@@ -5467,10 +5472,12 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
         send_battery_status();
         break;
 
+#if AP_MAVLINK_BATTERY2_ENABLED
     case MSG_BATTERY2:
         CHECK_PAYLOAD_SIZE(BATTERY2);
         send_battery2();
         break;
+#endif
 
     case MSG_EKF_STATUS_REPORT:
         CHECK_PAYLOAD_SIZE(EKF_STATUS_REPORT);
@@ -6027,16 +6034,6 @@ bool GCS_MAVLINK::get_default_interval_for_ap_message(const ap_message id, uint1
         }
     }
     return false;
-}
-
-bool GCS_MAVLINK::get_default_interval_for_mavlink_message_id(const uint32_t mavlink_message_id, uint16_t &interval) const
-{
-    const ap_message id = mavlink_id_to_ap_message_id(mavlink_message_id);
-    if (id == MSG_LAST) {
-        return false;
-    }
-
-    return get_default_interval_for_ap_message(id, interval);
 }
 
 /*

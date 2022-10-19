@@ -119,7 +119,7 @@ class ExtractFeatures(object):
             ('HAL_SOARING_ENABLED', 'SoaringController::var_info',),
             ('HAL_LANDING_DEEPSTALL_ENABLED', r'AP_Landing_Deepstall::terminate\b',),
 
-            ('GRIPPER_ENABLED', r'AP_Gripper::init\b',),
+            ('AP_GRIPPER_ENABLED', r'AP_Gripper::init\b',),
             ('HAL_SPRAYER_ENABLED', 'AC_Sprayer::AC_Sprayer',),
             ('LANDING_GEAR_ENABLED', r'AP_LandingGear::init\b',),
             ('WINCH_ENABLED', 'AP_Winch::AP_Winch',),
@@ -149,9 +149,13 @@ class ExtractFeatures(object):
         '''swiped from build_binaries.py'''
         if show_output:
             self.progress("Running (%s)" % " ".join(cmd_list))
-        p = subprocess.Popen(cmd_list, bufsize=1, stdin=None,
-                             stdout=subprocess.PIPE, close_fds=True,
-                             stderr=subprocess.STDOUT, env=env)
+        p = subprocess.Popen(
+            cmd_list,
+            stdin=None,
+            stdout=subprocess.PIPE,
+            close_fds=True,
+            stderr=subprocess.STDOUT,
+            env=env)
         output = ""
         while True:
             x = p.stdout.readline()
