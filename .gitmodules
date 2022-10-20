@@ -33,4 +33,4 @@
 	url = https://github.com/DroneCAN/libcanard
 [submodule "modules/mavlink"]
 	path = modules/mavlink
-	url = https://github.com/Shift-Environmental/mavlink-OceanSled.git
+	url = https://github.com/ArduPilot/mavlink.git
