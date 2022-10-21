@@ -3660,6 +3660,14 @@ void GCS_MAVLINK::handle_heartbeat(const mavlink_message_t &msg) const
     }
 }
 
+void GCS_MAVLINK::handle_arduino_sense(const mavlink_message_t &msg) const
+{
+    // forward message from OceanSled
+    mavlink_arduino_sense_t packet;
+    mavlink_msg_arduino_sense_decode(&msg, &packet);
+    mavlink_msg_arduino_sense_send_struct(chan, &packet);
+}
+
 /*
   handle messages which don't require vehicle specific data
  */
@@ -3925,6 +3933,10 @@ void GCS_MAVLINK::handle_common_message(const mavlink_message_t &msg)
         AP_CheckFirmware::handle_msg(chan, msg);
         break;
 #endif
+
+    case MAVLINK_MSG_ID_ARDUINO_SENSE:
+         handle_arduino_sense(msg);
+         break;
     }
 
 }
