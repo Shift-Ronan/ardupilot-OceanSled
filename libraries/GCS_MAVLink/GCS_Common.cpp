@@ -3665,6 +3665,15 @@ void GCS_MAVLINK::handle_arduino_sense(const mavlink_message_t &msg) const
     // forward message from OceanSled
     mavlink_arduino_sense_t packet;
     mavlink_msg_arduino_sense_decode(&msg, &packet);
+/*
+    TODO: Add timeout between alerts
+    if (packet.status % 2 != 0) {
+        gcs().send_text(MAV_SEVERITY_ALERT, "Could not read from Arduino");
+    }
+    if (packet.status > 1) {
+        gcs().send_text(MAV_SEVERITY_DEBUG, "TVOC sensor not detected");
+    }
+*/
     mavlink_msg_arduino_sense_send_struct(chan, &packet);
 }
 
@@ -3935,8 +3944,8 @@ void GCS_MAVLINK::handle_common_message(const mavlink_message_t &msg)
 #endif
 
     case MAVLINK_MSG_ID_ARDUINO_SENSE:
-         handle_arduino_sense(msg);
-         break;
+        handle_arduino_sense(msg);
+        break;
     }
 
 }
